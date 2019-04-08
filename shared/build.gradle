@@ -1,0 +1,78 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-multiplatform'
+apply plugin: 'kotlinx-serialization'
+
+android {
+    compileSdkVersion 28
+    defaultConfig {
+        minSdkVersion 15
+    }
+    buildTypes {
+        release {
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+kotlin {
+    targets {
+        final def iOSTarget = System.getenv('SDK_NAME')?.startsWith("iphoneos") \
+                              ? presets.iosArm64 : presets.iosX64
+
+        fromPreset(iOSTarget, 'ios') {
+            binaries {
+                framework('shared')
+            }
+        }
+
+        fromPreset(presets.android, 'android')
+    }
+
+    sourceSets {
+        commonMain.dependencies {
+            api 'org.jetbrains.kotlin:kotlin-stdlib-common'
+            implementation "io.ktor:ktor-client-core:$ktor_version"
+            implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core-common:$coroutines_version"
+            implementation "org.jetbrains.kotlinx:kotlinx-serialization-runtime:$serialization_version"
+        }
+
+        androidMain.dependencies {
+            api 'org.jetbrains.kotlin:kotlin-stdlib'
+            implementation "io.ktor:ktor-client-android:$ktor_version"
+            implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:$kotlinx_coroutines_version"
+        }
+
+        iosMain.dependencies {
+            implementation "io.ktor:ktor-client-ios:$ktor_version"
+            implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core-native:$kotlinx_coroutines_version"
+            implementation "org.jetbrains.kotlinx:kotlinx-serialization-runtime-native:$serialization_version"
+        }
+    }
+}
+
+// workaround for https://youtrack.jetbrains.com/issue/KT-27170
+configurations {
+    compileClasspath
+}
+
+task packForXCode(type: Sync) {
+    final File frameworkDir = new File(buildDir, "xcode-frameworks")
+    final String mode = project.findProperty("XCODE_CONFIGURATION")?.toUpperCase() ?: 'DEBUG'
+    final def framework = kotlin.targets.ios.binaries.getFramework("shared", mode)
+
+    inputs.property "mode", mode
+    dependsOn framework.linkTask
+
+    from { framework.outputFile.parentFile }
+    into frameworkDir
+
+    doLast {
+        new File(frameworkDir, 'gradlew').with {
+            text = "#!/bin/bash\nexport 'JAVA_HOME=${System.getProperty("java.home")}'\ncd '${rootProject.rootDir}'\n./gradlew \$@\n"
+            setExecutable(true)
+        }
+    }
+}
+
+tasks.build.dependsOn packForXCode
